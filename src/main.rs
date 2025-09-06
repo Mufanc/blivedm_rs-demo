@@ -1,14 +1,15 @@
 mod live;
+mod data;
 
-use std::env;
+use crate::data::event_logger;
 use crate::live::credential::Credential;
 use crate::live::LiveClient;
 use anyhow::Result;
-use log::info;
+use std::env;
 use tokio::runtime::Runtime;
 
 fn main() -> Result<()> {
-    env_logger::init();
+    event_logger::init();
 
     let room_id = &env::var("ROOM_ID").expect("ROOM_ID must be set");
     let sessdata = &env::var("SESSDATA").expect("SESSDATA must be set");
@@ -20,7 +21,7 @@ fn main() -> Result<()> {
         let handle = client.connect();
 
         while let Some(message) = client.next_message().await {
-            info!("{:?}", message);
+            tracing::info!(target: "raw", data = %message);
         }
 
         client.close().await;

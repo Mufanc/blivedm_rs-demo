@@ -1,22 +1,24 @@
 pub mod credential;
+mod message;
 
 use crate::live::credential::Credential;
 use client::models::BiliMessage;
 use client::websocket::BiliLiveClient;
 use futures_channel::mpsc;
+use futures_util::StreamExt;
 use log::{debug, error};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use futures_util::StreamExt;
 use tokio::task;
 use tokio::task::JoinHandle;
+use crate::live::message::LiveMessage;
 
 pub struct LiveClient {
     rx: mpsc::Receiver<BiliMessage>,
     client: Arc<Mutex<BiliLiveClient>>,
-    stop: Arc<AtomicBool>
+    stop: Arc<AtomicBool>,
 }
 
 impl LiveClient {
@@ -25,8 +27,12 @@ impl LiveClient {
 
         Self {
             rx,
-            client: Arc::new(Mutex::new(BiliLiveClient::new(&credential.to_string(), room_id, tx))),
-            stop: Arc::new(AtomicBool::new(false))
+            client: Arc::new(Mutex::new(BiliLiveClient::new(
+                &credential.to_string(),
+                room_id,
+                tx,
+            ))),
+            stop: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -41,7 +47,7 @@ impl LiveClient {
         let heartbeat_task = task::spawn_blocking(move || {
             loop {
                 if heartbeat_sig.load(Ordering::SeqCst) {
-                    break
+                    break;
                 }
 
                 match heartbeat_client.lock() {
@@ -51,7 +57,7 @@ impl LiveClient {
                     }
                     Err(err) => {
                         error!("error acquiring client heartbeat: {err:?}");
-                        break
+                        break;
                     }
                 }
 
@@ -69,9 +75,7 @@ impl LiveClient {
                 }
 
                 match recvmsg_client.lock() {
-                    Ok(mut proxy) => {
-                        proxy.recive()
-                    }
+                    Ok(mut proxy) => proxy.recive(),
                     Err(_) => {}
                 }
 
@@ -87,12 +91,14 @@ impl LiveClient {
         })
     }
 
-    pub async fn next_message(&mut self) -> Option<BiliMessage> {
-        self.rx.next().await
+    pub async fn next_message(&mut self) -> Option<LiveMessage> {
+        match self.rx.next().await {
+            Some(BiliMessage::Raw { data }) => Some(LiveMessage::new(data)),
+            _ => None
+        }
     }
 
     pub async fn close(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
     }
 }
-

@@ -2,12 +2,14 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 
 pub struct Credential {
-    sessdata: String
+    sessdata: String,
 }
 
 impl Credential {
     pub fn from_sessdata(sessdata: &str) -> Self {
-        Self { sessdata: sessdata.into() }
+        Self {
+            sessdata: sessdata.into(),
+        }
     }
 }
 
