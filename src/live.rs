@@ -1,7 +1,8 @@
 pub mod credential;
-mod message;
+pub mod message;
 
 use crate::live::credential::Credential;
+use crate::live::message::RawMessage;
 use client::models::BiliMessage;
 use client::websocket::BiliLiveClient;
 use futures_channel::mpsc;
@@ -13,7 +14,6 @@ use std::thread;
 use std::time::Duration;
 use tokio::task;
 use tokio::task::JoinHandle;
-use crate::live::message::LiveMessage;
 
 pub struct LiveClient {
     rx: mpsc::Receiver<BiliMessage>,
@@ -91,10 +91,10 @@ impl LiveClient {
         })
     }
 
-    pub async fn next_message(&mut self) -> Option<LiveMessage> {
+    pub async fn next_message(&mut self) -> Option<RawMessage> {
         match self.rx.next().await {
-            Some(BiliMessage::Raw { data }) => Some(LiveMessage::new(data)),
-            _ => None
+            Some(BiliMessage::Raw { data }) => Some(RawMessage::new(data)),
+            _ => None,
         }
     }
 
