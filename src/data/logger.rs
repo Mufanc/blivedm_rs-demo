@@ -77,7 +77,10 @@ impl MessageLogger {
 
     pub fn write(&mut self, message: &Value) -> Result<()> {
         let message_str = message.to_string();
+
         self.writer.write_all(message_str.as_bytes())?;
+        self.writer.write_all(b"\n")?;
+
         Ok(())
     }
 }
