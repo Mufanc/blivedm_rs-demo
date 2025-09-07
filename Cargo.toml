@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
+chrono = "0.4"
 client = { git = "https://github.com/Mufanc/blivedm_rs", branch = "statistics" }
 directories = "6.0"
 futures-channel = "0.3"

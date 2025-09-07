@@ -1,6 +1,7 @@
 use anyhow::{Context, Error, Result, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use chrono::Local;
 use prost::Message;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -67,6 +68,47 @@ impl<T> Required<T> for Option<T> {
 }
 
 #[derive(Debug)]
+pub struct Timestamp {
+    ts: u64,
+    from_server: bool,
+}
+
+impl Timestamp {
+    fn new_server(timestamp: u64) -> Self {
+        const THRESHOLD: u64 = 1_000_000_000_000; // 2001-09-09 09:46:40
+
+        let ts = if timestamp < THRESHOLD {
+            timestamp * 1000
+        } else {
+            timestamp
+        };
+
+        Self {
+            ts,
+            from_server: true,
+        }
+    }
+
+    fn new_local() -> Self {
+        Self {
+            ts: Local::now().timestamp_millis() as u64,
+            from_server: false,
+        }
+    }
+}
+
+impl Display for Timestamp {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            fmt,
+            "{}{}",
+            self.ts,
+            if self.from_server { "S" } else { "C" }
+        )
+    }
+}
+
+#[derive(Debug)]
 pub struct UserInfo {
     uid: u64,                  // UID
     uname: String,             // 用户名
@@ -94,6 +136,17 @@ impl UserInfo {
             wealth_level,
         })
     }
+
+    fn from_uinfo(uinfo: &Value, wealth_level: Option<i64>) -> Result<Self> {
+        Self::new(
+            uinfo["uid"].as_u64(),
+            uinfo["base"]["name"].as_str(),
+            uinfo["base"]["face"].as_str(),
+            uinfo["medal"]["level"].as_i64(),
+            uinfo["medal"]["score"].as_i64(),
+            wealth_level,
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -107,14 +160,14 @@ pub enum UserInteractType {
 pub enum LiveMessage {
     Danmaku {
         // 弹幕消息
-        timestamp: u64,                // 时间戳
+        timestamp: Timestamp,          // 时间戳
         user: UserInfo,                // 用户信息
         text: String,                  // 消息内容
         extra: HashMap<String, Value>, // 附加信息
     },
     Gift {
         // 礼物消息
-        timestamp: u64,            // 时间戳
+        timestamp: Timestamp,      // 时间戳
         user: UserInfo,            // 用户信息
         gift_name: String,         // 礼物名称
         gift_count: i64,           // 礼物数量
@@ -123,17 +176,23 @@ pub enum LiveMessage {
         img_basic: Option<String>, // 礼物图片
         img_webp: Option<String>,  // 礼物图片（webp）
     },
-    WatchedChange {
-        // 历史观众数量变化
-        count: i64,
+    Like {
+        // 点赞
+        timestamp: Timestamp, // 时间戳
+        user: UserInfo,       // 用户信息
     },
     UserInteract {
         // 进房/关注/分享
-        timestamp: u64,             // 时间戳
+        timestamp: Timestamp,       // 时间戳
         user: UserInfo,             // 用户信息
         msg_type: UserInteractType, // 事件类型
     },
-    Unsupported(String), // 尚未支持的消息
+    WatchedChange {
+        // 历史观众数量变化
+        timestamp: Timestamp, // 时间戳
+        count: i64,           // 观看数 uv
+    },
+    Unsupported(String),
 }
 
 macro_rules! nested_opt {
@@ -174,13 +233,11 @@ impl TryFrom<RawMessage> for LiveMessage {
                 }
 
                 Ok(Self::Danmaku {
-                    timestamp: message["info"][0][4].as_u64().required("timestamp")?,
-                    user: UserInfo::new(
-                        common_data["user"]["uid"].as_u64(),
-                        common_data["user"]["base"]["name"].as_str(),
-                        common_data["user"]["base"]["face"].as_str(),
-                        common_data["user"]["medal"]["level"].as_i64(),
-                        common_data["user"]["medal"]["score"].as_i64(),
+                    timestamp: Timestamp::new_server(
+                        message["info"][0][4].as_u64().required("timestamp")?,
+                    ),
+                    user: UserInfo::from_uinfo(
+                        &common_data["user"],
                         message["info"][16][0].as_i64(),
                     )?,
                     text: message["info"][1].as_str().required("danmaku text")?.into(),
@@ -188,15 +245,13 @@ impl TryFrom<RawMessage> for LiveMessage {
                 })
             }
             "SEND_GIFT" => Ok(Self::Gift {
-                timestamp: message["data"]["timestamp"]
-                    .as_u64()
-                    .required("timestamp")?,
-                user: UserInfo::new(
-                    message["data"]["sender_uinfo"]["uid"].as_u64(),
-                    message["data"]["sender_uinfo"]["base"]["name"].as_str(),
-                    message["data"]["sender_uinfo"]["base"]["face"].as_str(),
-                    message["data"]["sender_uinfo"]["medal"]["level"].as_i64(),
-                    message["data"]["sender_uinfo"]["medal"]["score"].as_i64(),
+                timestamp: Timestamp::new_server(
+                    message["data"]["timestamp"]
+                        .as_u64()
+                        .required("timestamp")?,
+                ),
+                user: UserInfo::from_uinfo(
+                    &message["data"]["sender_uinfo"],
                     message["data"]["wealth_level"].as_i64(),
                 )?,
                 gift_name: message["data"]["giftName"]
@@ -218,9 +273,14 @@ impl TryFrom<RawMessage> for LiveMessage {
                     .as_str()
                     .map(|x| x.into()),
             }),
-            "WATCHED_CHANGE" => Ok(Self::WatchedChange {
-                count: message["data"]["num"].as_i64().required("watched count")?,
-            }),
+            "LIKE_INFO_V3_CLICK" => {
+                message.display();
+
+                Ok(Self::Like {
+                    timestamp: Timestamp::new_local(),
+                    user: UserInfo::from_uinfo(&message["data"]["uinfo"], None)?,
+                })
+            }
             "INTERACT_WORD_V2" => {
                 let pb_data = message["data"]["pb"].as_str().required("pb")?;
                 let pb_data = STANDARD.decode(pb_data.as_bytes())?;
@@ -228,7 +288,7 @@ impl TryFrom<RawMessage> for LiveMessage {
                 let iw2 = proto::InteractWordV2::decode(pb_data.as_slice())?;
 
                 Ok(LiveMessage::UserInteract {
-                    timestamp: iw2.timestamp,
+                    timestamp: Timestamp::new_server(iw2.timestamp),
                     user: UserInfo::new(
                         Some(iw2.uid),
                         nested_opt!(iw2; uname),
@@ -247,6 +307,10 @@ impl TryFrom<RawMessage> for LiveMessage {
                     },
                 })
             }
+            "WATCHED_CHANGE" => Ok(Self::WatchedChange {
+                timestamp: Timestamp::new_local(),
+                count: message["data"]["num"].as_i64().required("watched count")?,
+            }),
             _ => Ok(Self::Unsupported(message.msg_type().into())),
         }
     }
