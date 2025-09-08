@@ -16,6 +16,7 @@ use tokio::task;
 use tokio::task::JoinHandle;
 
 pub struct LiveClient {
+    room_id: String,
     rx: mpsc::Receiver<BiliMessage>,
     client: Arc<Mutex<BiliLiveClient>>,
     stop: Arc<AtomicBool>,
@@ -26,6 +27,7 @@ impl LiveClient {
         let (tx, rx) = mpsc::channel(16);
 
         Self {
+            room_id: room_id.into(),
             rx,
             client: Arc::new(Mutex::new(BiliLiveClient::new(
                 &credential.to_string(),
@@ -93,7 +95,7 @@ impl LiveClient {
 
     pub async fn next_message(&mut self) -> Option<RawMessage> {
         match self.rx.next().await {
-            Some(BiliMessage::Raw { data }) => Some(RawMessage::new(data)),
+            Some(BiliMessage::Raw { data }) => Some(RawMessage::new(&self.room_id, data)),
             _ => None,
         }
     }

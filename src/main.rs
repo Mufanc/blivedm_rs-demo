@@ -7,7 +7,7 @@ use crate::live::LiveClient;
 use crate::live::credential::Credential;
 use crate::live::message::LiveMessage;
 use anyhow::Result;
-use log::{debug, error};
+use log::{debug, error, trace};
 use std::env;
 use tokio::runtime::Runtime;
 
@@ -25,9 +25,7 @@ fn main() -> Result<()> {
         let mut message_logger = MessageLogger::new(room_id);
 
         while let Some(message) = client.next_message().await {
-            let data = message.data();
-
-            if let Err(err) = message_logger.write(&data) {
+            if let Err(err) = message_logger.write(&message.data()) {
                 error!("failed to write message: {}", err);
             }
 
@@ -35,10 +33,10 @@ fn main() -> Result<()> {
 
             match message {
                 Ok(LiveMessage::Unsupported(msg_type)) => {
-                    debug!("unsupported message type: {}", msg_type);
+                    trace!("unsupported message type: {}", msg_type);
                 }
                 Ok(message) => {
-                    println!("{message:?}");
+                    debug!("{message:?}");
                 }
                 Err(msg) => {
                     error!("failed to parse message: {:?}", msg);

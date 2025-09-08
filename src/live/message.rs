@@ -13,33 +13,39 @@ mod proto {
 }
 
 #[derive(Debug)]
-pub struct RawMessage(Value);
+pub struct RawMessage {
+    room_id: String,
+    data: Value,
+}
 
 impl RawMessage {
-    pub fn new(data: Value) -> Self {
-        Self(data)
+    pub fn new(room_id: &str, data: Value) -> Self {
+        Self {
+            room_id: room_id.into(),
+            data,
+        }
     }
 
     pub fn data(&self) -> &Value {
-        &self.0
+        &self.data
     }
 
     pub fn display(&self) {
         println!(
             "{}",
-            serde_json::to_string_pretty(&self.0).expect("failed to serialize")
+            serde_json::to_string_pretty(&self.data).expect("failed to serialize")
         );
     }
 }
 impl RawMessage {
     pub fn msg_type(&self) -> &str {
-        self.0["cmd"].as_str().expect("wtf??")
+        self.data["cmd"].as_str().expect("wtf??")
     }
 }
 
 impl Display for RawMessage {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(fmt, "{}", self.0)
+        write!(fmt, "{}", self.data)
     }
 }
 
@@ -47,13 +53,13 @@ impl Deref for RawMessage {
     type Target = Value;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.data
     }
 }
 
 impl Into<Value> for RawMessage {
     fn into(self) -> Value {
-        self.0
+        self.data
     }
 }
 
@@ -151,6 +157,13 @@ impl UserInfo {
 }
 
 #[derive(Debug)]
+pub enum BattleStatus {
+    Start,
+    Process,
+    End,
+}
+
+#[derive(Debug)]
 pub enum UserInteractType {
     JoinRoom,
     Subscribe,
@@ -190,6 +203,14 @@ pub enum LiveMessage {
         timestamp: Timestamp, // 时间戳
         user: UserInfo,       // 用户信息
     },
+    BattleInfo {
+        // PK 消息
+        timestamp: Timestamp, // 时间戳
+        status: BattleStatus,
+        opponent_room: String, // 对手房间 ID
+        host_votes: i64,       // 本房主播得票
+        opponent_votes: i64,   // 对方主播得票
+    },
     UserInteract {
         // 进房/关注/分享
         timestamp: Timestamp,       // 时间戳
@@ -212,6 +233,7 @@ impl LiveMessage {
             LiveMessage::Danmaku { timestamp, .. } => Some(timestamp),
             LiveMessage::Gift { timestamp, .. } => Some(timestamp),
             LiveMessage::Like { timestamp, .. } => Some(timestamp),
+            LiveMessage::BattleInfo { timestamp, .. } => Some(timestamp),
             LiveMessage::UserInteract { timestamp, .. } => Some(timestamp),
             LiveMessage::WatchedChange { timestamp, .. } => Some(timestamp),
             LiveMessage::Unsupported(_) => None,
@@ -305,6 +327,44 @@ impl TryFrom<RawMessage> for LiveMessage {
                 Ok(Self::Like {
                     timestamp: Timestamp::new_local(),
                     user: UserInfo::from_uinfo(&message["data"]["uinfo"], None)?,
+                })
+            }
+            "PK_BATTLE_START_NEW" | "PK_BATTLE_PROCESS_NEW" | "PK_BATTLE_SETTLE_NEW" => {
+                let status = match message.msg_type() {
+                    "PK_BATTLE_START_NEW" => BattleStatus::Start,
+                    "PK_BATTLE_PROCESS_NEW" => BattleStatus::Process,
+                    "PK_BATTLE_SETTLE_NEW" => BattleStatus::End,
+                    _ => unreachable!("wtf??"),
+                };
+
+                let room_a = message["data"]["init_info"]["room_id"]
+                    .as_u64()
+                    .required("init_info room")?
+                    .to_string();
+
+                let room_b = message["data"]["match_info"]["room_id"]
+                    .as_u64()
+                    .required("match_info room")?
+                    .to_string();
+
+                let vote_a = message["data"]["init_info"]["votes"].as_i64().unwrap_or(0);
+
+                let vote_b = message["data"]["match_info"]["votes"].as_i64().unwrap_or(0);
+
+                let (opponent_room, host_votes, opponent_votes) = {
+                    if room_a == message.room_id {
+                        (room_b, vote_a, vote_b)
+                    } else {
+                        (room_a, vote_b, vote_a)
+                    }
+                };
+
+                Ok(Self::BattleInfo {
+                    timestamp: Timestamp::new_server(message["timestamp"].as_u64())?,
+                    status,
+                    opponent_room,
+                    host_votes,
+                    opponent_votes,
                 })
             }
             "INTERACT_WORD_V2" => {
