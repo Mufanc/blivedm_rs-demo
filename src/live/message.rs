@@ -1,7 +1,7 @@
 use anyhow::{Context, Error, Result, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use chrono::Local;
+use chrono::{DateTime, Local, TimeZone};
 use prost::Message;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -74,19 +74,20 @@ pub struct Timestamp {
 }
 
 impl Timestamp {
-    fn new_server(timestamp: u64) -> Self {
+    fn new_server(timestamp: Option<u64>) -> Result<Self> {
         const THRESHOLD: u64 = 1_000_000_000_000; // 2001-09-09 09:46:40
 
+        let timestamp = timestamp.required("timestamp")?;
         let ts = if timestamp < THRESHOLD {
             timestamp * 1000
         } else {
             timestamp
         };
 
-        Self {
+        Ok(Self {
             ts,
             from_server: true,
-        }
+        })
     }
 
     fn new_local() -> Self {
@@ -158,6 +159,14 @@ pub enum UserInteractType {
 
 #[derive(Debug)]
 pub enum LiveMessage {
+    StreamStart {
+        // 开播
+        timestamp: Timestamp,
+    },
+    SteamEnd {
+        // 停播
+        timestamp: Timestamp,
+    },
     Danmaku {
         // 弹幕消息
         timestamp: Timestamp,          // 时间戳
@@ -195,6 +204,23 @@ pub enum LiveMessage {
     Unsupported(String),
 }
 
+impl LiveMessage {
+    fn timestamp(&self) -> Option<DateTime<Local>> {
+        let timestamp = match self {
+            LiveMessage::StreamStart { timestamp, .. } => Some(timestamp),
+            LiveMessage::SteamEnd { timestamp, .. } => Some(timestamp),
+            LiveMessage::Danmaku { timestamp, .. } => Some(timestamp),
+            LiveMessage::Gift { timestamp, .. } => Some(timestamp),
+            LiveMessage::Like { timestamp, .. } => Some(timestamp),
+            LiveMessage::UserInteract { timestamp, .. } => Some(timestamp),
+            LiveMessage::WatchedChange { timestamp, .. } => Some(timestamp),
+            LiveMessage::Unsupported(_) => None,
+        };
+
+        timestamp.and_then(|ts| Local.timestamp_micros(ts.ts as i64).single())
+    }
+}
+
 macro_rules! nested_opt {
     ($proto:expr; $target:ident) => {
         Some(&$proto).map(|x| (&x.$target).to_owned())
@@ -211,6 +237,12 @@ impl TryFrom<RawMessage> for LiveMessage {
 
     fn try_from(message: RawMessage) -> Result<Self, Self::Error> {
         match message.msg_type() {
+            "LIVE" => Ok(LiveMessage::StreamStart {
+                timestamp: Timestamp::new_server(message["live_time"].as_u64())?,
+            }),
+            "PREPARING" => Ok(LiveMessage::SteamEnd {
+                timestamp: Timestamp::new_server(message["send_time"].as_u64())?,
+            }),
             "DANMU_MSG" => {
                 let common_data = &message["info"][0][15];
 
@@ -233,9 +265,7 @@ impl TryFrom<RawMessage> for LiveMessage {
                 }
 
                 Ok(Self::Danmaku {
-                    timestamp: Timestamp::new_server(
-                        message["info"][0][4].as_u64().required("timestamp")?,
-                    ),
+                    timestamp: Timestamp::new_server(message["info"][0][4].as_u64())?,
                     user: UserInfo::from_uinfo(
                         &common_data["user"],
                         message["info"][16][0].as_i64(),
@@ -245,11 +275,7 @@ impl TryFrom<RawMessage> for LiveMessage {
                 })
             }
             "SEND_GIFT" => Ok(Self::Gift {
-                timestamp: Timestamp::new_server(
-                    message["data"]["timestamp"]
-                        .as_u64()
-                        .required("timestamp")?,
-                ),
+                timestamp: Timestamp::new_server(message["data"]["timestamp"].as_u64())?,
                 user: UserInfo::from_uinfo(
                     &message["data"]["sender_uinfo"],
                     message["data"]["wealth_level"].as_i64(),
@@ -288,7 +314,7 @@ impl TryFrom<RawMessage> for LiveMessage {
                 let iw2 = proto::InteractWordV2::decode(pb_data.as_slice())?;
 
                 Ok(LiveMessage::UserInteract {
-                    timestamp: Timestamp::new_server(iw2.timestamp),
+                    timestamp: Timestamp::new_server(Some(iw2.timestamp)).expect("wtf??"),
                     user: UserInfo::new(
                         Some(iw2.uid),
                         nested_opt!(iw2; uname),
