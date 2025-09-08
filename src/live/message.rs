@@ -187,6 +187,13 @@ pub enum LiveMessage {
         text: String,                  // 消息内容
         extra: HashMap<String, Value>, // 附加信息
     },
+    SuperChat {
+        // 醒目留言
+        timestamp: Timestamp, // 时间戳
+        user: UserInfo,       // 用户信息
+        price: i64,           // 价格
+        text: String,         // 留言内容
+    },
     Gift {
         // 礼物消息
         timestamp: Timestamp,      // 时间戳
@@ -231,6 +238,7 @@ impl LiveMessage {
             LiveMessage::StreamStart { timestamp, .. } => Some(timestamp),
             LiveMessage::SteamEnd { timestamp, .. } => Some(timestamp),
             LiveMessage::Danmaku { timestamp, .. } => Some(timestamp),
+            LiveMessage::SuperChat { timestamp, .. } => Some(timestamp),
             LiveMessage::Gift { timestamp, .. } => Some(timestamp),
             LiveMessage::Like { timestamp, .. } => Some(timestamp),
             LiveMessage::BattleInfo { timestamp, .. } => Some(timestamp),
@@ -296,6 +304,17 @@ impl TryFrom<RawMessage> for LiveMessage {
                     extra,
                 })
             }
+            "SUPER_CHAT_MESSAGE" => Ok(LiveMessage::SuperChat {
+                timestamp: Timestamp::new_server(message["data"]["ts"].as_u64())?,
+                user: UserInfo::from_uinfo(&message["data"]["uinfo"], None)?,
+                price: message["data"]["price"]
+                    .as_i64()
+                    .required("super chat price")?,
+                text: message["data"]["message"]
+                    .as_str()
+                    .required("super chat message")?
+                    .into(),
+            }),
             "SEND_GIFT" => Ok(Self::Gift {
                 timestamp: Timestamp::new_server(message["data"]["timestamp"].as_u64())?,
                 user: UserInfo::from_uinfo(
