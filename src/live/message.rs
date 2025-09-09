@@ -341,8 +341,6 @@ impl TryFrom<RawMessage> for LiveMessage {
                     .map(|x| x.into()),
             }),
             "LIKE_INFO_V3_CLICK" => {
-                message.display();
-
                 Ok(Self::Like {
                     timestamp: Timestamp::new_local(),
                     user: UserInfo::from_uinfo(&message["data"]["uinfo"], None)?,
