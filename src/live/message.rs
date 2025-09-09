@@ -182,10 +182,10 @@ pub enum LiveMessage {
     },
     Danmaku {
         // 弹幕消息
-        timestamp: Timestamp,          // 时间戳
-        user: UserInfo,                // 用户信息
-        text: String,                  // 消息内容
-        extra: HashMap<String, Value>, // 附加信息
+        timestamp: Timestamp,           // 时间戳
+        user: UserInfo,                 // 用户信息
+        text: String,                   // 消息内容
+        extra: HashMap<String, String>, // 附加信息
     },
     SuperChat {
         // 醒目留言
@@ -284,13 +284,13 @@ impl TryFrom<RawMessage> for LiveMessage {
                     .as_str()
                     .and_then(|s| serde_json::from_str(s).ok());
 
-                let mut extra: HashMap<String, Value> = HashMap::new();
+                let mut extra: HashMap<String, String> = HashMap::new();
 
                 if let Some(common_data_extra) = &common_data_extra {
                     let emots = &common_data_extra["emots"];
 
                     if !emots.is_null() {
-                        extra.insert("emots".into(), Value::clone(emots));
+                        extra.insert("emots".into(), serde_json::to_string(emots)?);
                     }
                 }
 
